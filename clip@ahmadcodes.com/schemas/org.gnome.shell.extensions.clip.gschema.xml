@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.clip" path="/org/gnome/shell/extensions/clip/">
+    <key name="show-history" type="as">
+      <default><![CDATA[['<Super>v']]]></default>
+      <summary>Open clipboard history</summary>
+    </key>
+    <key name="capture-text" type="as">
+      <default><![CDATA[['<Super><Shift>t']]]></default>
+      <summary>Select a screen region and copy the text in it</summary>
+    </key>
+    <key name="ocr-languages" type="s">
+      <default>'eng+fas'</default>
+      <summary>Tesseract language codes, joined with +</summary>
+      <description>Installed: eng, fas, hye. Fewer languages means faster and more accurate results.</description>
+    </key>
+    <key name="history-size" type="i">
+      <range min="10" max="1000"/>
+      <default>100</default>
+      <summary>How many unpinned entries to keep in memory</summary>
+    </key>
+  </schema>
+</schemalist>

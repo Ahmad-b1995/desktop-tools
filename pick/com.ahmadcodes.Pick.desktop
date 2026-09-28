@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Pick Color
+Comment=Pick a color anywhere on screen (Super+Shift+C)
+Exec=pick
+Icon=color-select-symbolic
+Terminal=false
+Categories=Graphics;Utility;
+Keywords=color;colour;picker;eyedropper;hex;
+StartupNotify=false

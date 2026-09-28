@@ -1,0 +1,85 @@
+/* History popup */
+.clip-backdrop { background-color: rgba(0, 0, 0, 0.18); }
+
+.clip-panel {
+  background-color: #1f1f23;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 18px;
+  padding: 10px;
+  spacing: 8px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+
+.clip-search {
+  font-size: 11.5pt;
+  color: #f4f4f5;
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 2px solid transparent;
+  border-radius: 11px;
+  padding: 9px 12px;
+  caret-color: #f4f4f5;
+  selection-background-color: #3584e4;
+  selected-color: #ffffff;
+}
+.clip-search:focus { border-color: rgba(53, 132, 228, 0.9); }
+.clip-search StLabel.hint-text { color: rgba(255, 255, 255, 0.35); }
+
+.clip-scroll { max-height: 460px; }
+.clip-list { spacing: 2px; }
+
+.clip-row {
+  border-radius: 9px;
+  padding: 8px 10px;
+  color: #e7e7ea;
+  font-size: 10.5pt;
+  text-align: left;
+}
+.clip-row:selected { background-color: #3584e4; color: #ffffff; }
+
+.clip-row-meta,
+.clip-row-key {
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 8.5pt;
+  padding-left: 12px;
+}
+.clip-row-key { font-feature-settings: "tnum"; min-width: 36px; text-align: right; }
+.clip-row-pin { icon-size: 12px; color: #f6d32d; padding-left: 10px; }
+.clip-row:selected .clip-row-meta,
+.clip-row:selected .clip-row-key { color: rgba(255, 255, 255, 0.82); }
+
+.clip-empty {
+  color: rgba(255, 255, 255, 0.45);
+  padding: 28px 8px;
+  text-align: center;
+}
+
+.clip-footer { spacing: 6px; }
+.clip-gear {
+  border-radius: 99px;
+  padding: 5px;
+  color: rgba(255, 255, 255, 0.45);
+}
+.clip-gear:hover { background-color: rgba(255, 255, 255, 0.08); color: #ffffff; }
+.clip-gear StIcon { icon-size: 14px; }
+
+.clip-hint {
+  color: rgba(255, 255, 255, 0.34);
+  font-size: 8pt;
+  padding: 2px 6px 0;
+}
+
+/* Region selection */
+.clip-shade { background-color: rgba(0, 0, 0, 0.45); }
+.clip-frame {
+  border: 2px solid #3584e4;
+  border-radius: 3px;
+}
+.clip-badge {
+  background-color: rgba(24, 24, 28, 0.92);
+  color: #ffffff;
+  border-radius: 7px;
+  padding: 4px 9px;
+  font-size: 9pt;
+  font-feature-settings: "tnum";
+}
+.clip-tip { font-size: 10pt; padding: 7px 14px; border-radius: 99px; }

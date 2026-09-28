@@ -1,0 +1,9 @@
+{
+  "uuid": "clip@ahmadcodes.com",
+  "name": "Clip",
+  "description": "Minimal clipboard history (Super+V) and screen text capture (Super+Shift+T). History stays in memory, never touches the network, and skips passwords flagged by password managers.",
+  "shell-version": ["49", "50"],
+  "settings-schema": "org.gnome.shell.extensions.clip",
+  "session-modes": ["user", "unlock-dialog"],
+  "version": 1
+}
