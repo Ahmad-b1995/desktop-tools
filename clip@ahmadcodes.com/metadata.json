@@ -5,5 +5,5 @@
   "shell-version": ["49", "50"],
   "settings-schema": "org.gnome.shell.extensions.clip",
   "session-modes": ["user", "unlock-dialog"],
-  "version": 1
+  "version": 2
 }

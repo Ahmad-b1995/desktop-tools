@@ -114,8 +114,20 @@ function matches(text, words) {
     return words.every(w => haystack.includes(w));
 }
 
+// GNOME 49 reports which devices a grab holds; GNOME 50 dropped that API and
+// only tells whether the grab was revoked.
 function grabbedKeyboard(grab) {
-    return (grab.get_seat_state() & Clutter.GrabState.KEYBOARD) !== 0;
+    if (typeof grab.get_seat_state === 'function')
+        return (grab.get_seat_state() & Clutter.GrabState.KEYBOARD) !== 0;
+    return !grab.is_revoked?.();
+}
+
+// GNOME 50 sets cursors per actor; GNOME 49 sets one for the whole display.
+function setCrosshair(actor, on) {
+    if (typeof actor.set_cursor_type === 'function' && Clutter.CursorType)
+        actor.set_cursor_type(on ? Clutter.CursorType.CROSSHAIR : Clutter.CursorType.INHERIT);
+    else
+        global.display.set_cursor(on ? Meta.Cursor.CROSSHAIR : Meta.Cursor.DEFAULT);
 }
 
 // ------------------------------------------------------------ history popup
@@ -194,9 +206,14 @@ class HistoryPopup {
         Main.uiGroup.set_child_above_sibling(this._root, null);
 
         this._grab = Main.pushModal(this._root, {actionMode: Shell.ActionMode.SYSTEM_MODAL});
-        if (!grabbedKeyboard(this._grab)) {
+        try {
+            if (!grabbedKeyboard(this._grab)) {
+                this.close();
+                return;
+            }
+        } catch (e) {
             this.close();
-            return;
+            throw e;
         }
 
         const text = this._entry.clutter_text;
@@ -386,11 +403,16 @@ class RegionSelector {
         Main.uiGroup.set_child_above_sibling(this._root, null);
 
         this._grab = Main.pushModal(this._root, {actionMode: Shell.ActionMode.POPUP});
-        if (!grabbedKeyboard(this._grab)) {
+        try {
+            if (!grabbedKeyboard(this._grab)) {
+                this._close();
+                return null;
+            }
+            setCrosshair(this._root, true);
+        } catch (e) {
             this._close();
-            return null;
+            throw e;
         }
-        global.display.set_cursor(Meta.Cursor.CROSSHAIR);
 
         return new Promise(resolve => {
             let start = null;
@@ -463,7 +485,7 @@ class RegionSelector {
     _close() {
         if (!this._root)
             return;
-        global.display.set_cursor(Meta.Cursor.DEFAULT);
+        setCrosshair(this._root, false);
         if (this._grab)
             Main.popModal(this._grab);
         this._grab = null;
