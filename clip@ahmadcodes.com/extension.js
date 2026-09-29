@@ -179,15 +179,19 @@ class HistoryPopup {
         const footer = new St.BoxLayout({style_class: 'clip-footer'});
         footer.add_child(new St.Label({
             style_class: 'clip-hint', x_expand: true, y_align: Clutter.ActorAlign.CENTER,
-            text: 'Enter paste    Shift+Enter copy    Ctrl+P pin    Del remove    Ctrl+Shift+Del clear',
+            text: 'Enter paste    Shift+Enter copy    Ctrl+P pin    Del remove    Ctrl+, settings',
         }));
-        const gear = new St.Button({
-            style_class: 'clip-gear', can_focus: false, accessible_name: 'Clip settings',
+        // Plain reactive actors with our own release handlers: GNOME 50 changed
+        // how St.Button clicks are delivered inside a modal grab.
+        const gear = new St.Bin({
+            style_class: 'clip-gear', reactive: true, track_hover: true,
+            accessible_name: 'Clip settings',
             child: new St.Icon({icon_name: 'emblem-system-symbolic'}),
         });
-        gear.connect('clicked', () => {
-            this.close();
-            this._onSettings();
+        gear.connect('button-release-event', (_a, event) => {
+            if (event.get_button() === Clutter.BUTTON_PRIMARY)
+                this._openSettings();
+            return Clutter.EVENT_STOP;
         });
         footer.add_child(gear);
 
@@ -250,8 +254,8 @@ class HistoryPopup {
     }
 
     _makeRow(item, index) {
-        const row = new St.Button({style_class: 'clip-row', x_expand: true, reactive: true, can_focus: false});
-        const box = new St.BoxLayout({x_expand: true});
+        const row = new St.BoxLayout({style_class: 'clip-row', x_expand: true, reactive: true, track_hover: true});
+        const box = row;
 
         const preview = item.text.replace(/\s+/g, ' ').trim().slice(0, PREVIEW_LENGTH);
         const label = new St.Label({text: preview, x_expand: true, y_align: Clutter.ActorAlign.CENTER, style_class: 'clip-row-text'});
@@ -267,8 +271,11 @@ class HistoryPopup {
         if (index < 9)
             box.add_child(new St.Label({text: `Alt+${index + 1}`, y_align: Clutter.ActorAlign.CENTER, style_class: 'clip-row-key'}));
 
-        row.set_child(box);
-        row.connect('clicked', () => this._activate(index, true));
+        row.connect('button-release-event', (_a, event) => {
+            if (event.get_button() === Clutter.BUTTON_PRIMARY)
+                this._activate(index, true);
+            return Clutter.EVENT_STOP;
+        });
         row.connect('motion-event', () => {
             this._select(index, false);
             return Clutter.EVENT_PROPAGATE;
@@ -289,6 +296,11 @@ class HistoryPopup {
         row.add_style_pseudo_class('selected');
         if (scroll)
             ensureActorVisibleInScrollView(this._scroll, row);
+    }
+
+    _openSettings() {
+        this.close();
+        this._onSettings();
     }
 
     _activate(index, paste) {
@@ -347,6 +359,10 @@ class HistoryPopup {
             return Clutter.EVENT_PROPAGATE;
         }
 
+        if (ctrl && key === Clutter.KEY_comma) {
+            this._openSettings();
+            return Clutter.EVENT_STOP;
+        }
         if (ctrl && (key === Clutter.KEY_p || key === Clutter.KEY_P) && item) {
             const keep = this._selected;
             this._history.togglePin(item);

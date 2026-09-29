@@ -1,5 +1,14 @@
 # Changelog
 
+## 3 (2026-09-29)
+
+- Clip: the settings gear and mouse clicks on entries use their own release
+  handlers (GNOME 50 no longer delivered St.Button clicks inside the popup);
+  Ctrl+, opens settings from the keyboard.
+- pick: `install.sh` stores the screenshot permission for `com.ahmadcodes.Pick`.
+  GNOME 50 refused pick's silent screenshot and never showed the permission
+  dialog, so the picker opened and closed without doing anything.
+
 ## 2 (2026-09-29)
 
 - Clip: works on GNOME 50. Super+V crashed because `Clutter.Grab.get_seat_state`

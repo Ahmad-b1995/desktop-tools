@@ -19,6 +19,7 @@ edit_list org.gnome.shell enabled-extensions remove "$UUID"
 rm -rf "$HOME/.local/share/gnome-shell/extensions/$UUID"
 
 pkill -x pick 2>/dev/null
+gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore --object-path /org/freedesktop/impl/portal/PermissionStore --method org.freedesktop.impl.portal.PermissionStore.DeletePermission screenshot screenshot com.ahmadcodes.Pick >/dev/null 2>&1
 rm -f "$HOME/.local/bin/pick" "$HOME/.local/share/applications/com.ahmadcodes.Pick.desktop"
 edit_list $KB custom-keybindings remove "$KP"
 gsettings reset-recursively $KB.custom-keybinding:$KP 2>/dev/null

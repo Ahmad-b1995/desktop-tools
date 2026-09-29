@@ -26,6 +26,13 @@ edit_list() {  # edit_list SCHEMA KEY add|remove VALUE
   gsettings set "$1" "$2" "$new"
 }
 
+echo "== pick: allow screenshots"
+# GTK registers pick with the portal as com.ahmadcodes.Pick. GNOME 50 refuses
+# silent screenshots for an app id it has no permission for, and its dialog
+# does not appear for a windowless request, so store the "Allow" answer.
+gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore --object-path /org/freedesktop/impl/portal/PermissionStore --method org.freedesktop.impl.portal.PermissionStore.SetPermission screenshot true screenshot com.ahmadcodes.Pick "['yes']" >/dev/null \
+  || echo "Could not store the permission; pick may be refused until it is granted."
+
 echo "== pick: Super+Shift+C shortcut"
 KB=org.gnome.settings-daemon.plugins.media-keys
 KP=/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/pick/
