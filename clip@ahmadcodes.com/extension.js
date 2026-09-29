@@ -22,6 +22,9 @@ Gio._promisify(Shell.Screenshot, 'composite_to_stream');
 Gio._promisify(Gio.Subprocess.prototype, 'communicate_utf8_async');
 
 const MAX_TEXT_LENGTH = 512 * 1024;   // ignore anything bigger (logs, dumps)
+const MAX_IMAGES = 20;                // unpinned images kept in memory
+const MAX_IMAGE_BYTES = 30 * 1024 * 1024;
+const THUMB_HEIGHT = 40;
 const MAX_ROWS = 200;                 // rows rendered in the popup at once
 const PREVIEW_LENGTH = 240;
 const PASTE_DELAY_MS = 90;            // time for focus to return to the app
@@ -48,6 +51,27 @@ class History {
         this._trim();
     }
 
+    // Images stay in memory only; pinning keeps one for the session.
+    addImage(bytes, mime) {
+        const size = bytes?.get_size() ?? 0;
+        if (!size || size > MAX_IMAGE_BYTES)
+            return;
+        const hash = GLib.compute_checksum_for_bytes(GLib.ChecksumType.SHA256, bytes);
+        const index = this.items.findIndex(item => item.hash === hash);
+        let item;
+        if (index >= 0) {
+            item = this.items.splice(index, 1)[0];
+        } else {
+            item = describeImage(bytes);
+            if (!item)
+                return;
+            Object.assign(item, {kind: 'image', bytes, mime, hash, size, pinned: false});
+        }
+        item.time = Date.now();
+        this.items.unshift(item);
+        this._trim();
+    }
+
     remove(item) {
         this.items = this.items.filter(i => i !== item);
         if (item.pinned)
@@ -65,8 +89,9 @@ class History {
     }
 
     _trim() {
-        let unpinned = 0;
-        this.items = this.items.filter(i => i.pinned || ++unpinned <= this.limit);
+        let unpinned = 0, images = 0;
+        this.items = this.items.filter(i => i.pinned ||
+            (++unpinned <= this.limit && (i.kind !== 'image' || ++images <= MAX_IMAGES)));
     }
 
     _loadPinned() {
@@ -82,7 +107,7 @@ class History {
     }
 
     _savePinned() {
-        const pinned = this.items.filter(i => i.pinned).map(i => i.text);
+        const pinned = this.items.filter(i => i.pinned && i.kind !== 'image').map(i => i.text);
         try {
             GLib.mkdir_with_parents(this._file.get_parent().get_path(), 0o700);
             this._file.replace_contents(
@@ -107,6 +132,37 @@ function relativeTime(ms) {
     if (s < 86400)
         return `${Math.floor(s / 3600)}h`;
     return `${Math.floor(s / 86400)}d`;
+}
+
+// Size and a small PNG thumbnail, decoded once when the image is copied.
+function describeImage(bytes) {
+    try {
+        const loader = new GdkPixbuf.PixbufLoader();
+        loader.write_bytes(bytes);
+        loader.close();
+        const pixbuf = loader.get_pixbuf();
+        const width = pixbuf.get_width(), height = pixbuf.get_height();
+        const scale = Math.min(1, (THUMB_HEIGHT * 2) / height);
+        const thumb = pixbuf.scale_simple(Math.max(1, Math.round(width * scale)),
+            Math.max(1, Math.round(height * scale)), GdkPixbuf.InterpType.BILINEAR);
+        const [, png] = thumb.save_to_bufferv('png', [], []);
+        return {width, height, thumb: Gio.BytesIcon.new(GLib.Bytes.new(png))};
+    } catch (e) {
+        logError(e, 'Clip: could not read copied image');
+        return null;
+    }
+}
+
+function formatBytes(n) {
+    if (n < 1024 * 1024)
+        return `${Math.max(1, Math.round(n / 1024))} KB`;
+    return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function searchText(item) {
+    return item.kind === 'image'
+        ? `image screenshot picture ${item.width}x${item.height} ${item.mime}`
+        : item.text;
 }
 
 function matches(text, words) {
@@ -240,7 +296,7 @@ class HistoryPopup {
 
     _refilter() {
         const words = this._entry.get_text().toLowerCase().split(/\s+/).filter(Boolean);
-        this._shown = this._history.items.filter(i => matches(i.text, words)).slice(0, MAX_ROWS);
+        this._shown = this._history.items.filter(i => matches(searchText(i), words)).slice(0, MAX_ROWS);
         this._list.destroy_all_children();
         this._rows = this._shown.map((item, index) => this._makeRow(item, index));
         if (this._rows.length === 0) {
@@ -257,13 +313,22 @@ class HistoryPopup {
         const row = new St.BoxLayout({style_class: 'clip-row', x_expand: true, reactive: true, track_hover: true});
         const box = row;
 
-        const preview = item.text.replace(/\s+/g, ' ').trim().slice(0, PREVIEW_LENGTH);
-        const label = new St.Label({text: preview, x_expand: true, y_align: Clutter.ActorAlign.CENTER, style_class: 'clip-row-text'});
-        label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        box.add_child(label);
-
-        const lines = item.text.split('\n').length;
-        const meta = [lines > 1 ? `${lines} lines` : '', relativeTime(item.time)].filter(Boolean).join('  ·  ');
+        let meta;
+        if (item.kind === 'image') {
+            box.add_child(new St.Icon({gicon: item.thumb, icon_size: THUMB_HEIGHT, style_class: 'clip-row-thumb'}));
+            box.add_child(new St.Label({
+                text: `Image  ${item.width} × ${item.height}`, x_expand: true,
+                y_align: Clutter.ActorAlign.CENTER, style_class: 'clip-row-text',
+            }));
+            meta = [formatBytes(item.size), relativeTime(item.time)].filter(Boolean).join('  ·  ');
+        } else {
+            const preview = item.text.replace(/\s+/g, ' ').trim().slice(0, PREVIEW_LENGTH);
+            const label = new St.Label({text: preview, x_expand: true, y_align: Clutter.ActorAlign.CENTER, style_class: 'clip-row-text'});
+            label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            box.add_child(label);
+            const lines = item.text.split('\n').length;
+            meta = [lines > 1 ? `${lines} lines` : '', relativeTime(item.time)].filter(Boolean).join('  ·  ');
+        }
         if (meta)
             box.add_child(new St.Label({text: meta, y_align: Clutter.ActorAlign.CENTER, style_class: 'clip-row-meta'}));
         if (item.pinned)
@@ -601,11 +666,19 @@ export default class ClipExtension extends Extension {
         const mimes = source.get_mimetypes();
         if (mimes.includes(PASSWORD_HINT))
             return;
-        if (!mimes.some(m => m.startsWith('text/') || m === 'UTF8_STRING' || m === 'STRING'))
+        const clipboard = St.Clipboard.get_default();
+        if (mimes.some(m => m.startsWith('text/') || m === 'UTF8_STRING' || m === 'STRING')) {
+            clipboard.get_text(St.ClipboardType.CLIPBOARD, (_clip, text) => {
+                this._history?.add(text);
+            });
             return;
-        St.Clipboard.get_default().get_text(St.ClipboardType.CLIPBOARD, (_clip, text) => {
-            this._history?.add(text);
-        });
+        }
+        const image = mimes.includes('image/png') ? 'image/png' : mimes.find(m => m.startsWith('image/'));
+        if (image) {
+            clipboard.get_content(St.ClipboardType.CLIPBOARD, image, (_clip, bytes) => {
+                this._history?.addImage(bytes, image);
+            });
+        }
     }
 
     _toggleHistory() {
@@ -621,7 +694,11 @@ export default class ClipExtension extends Extension {
     }
 
     _use(item, paste) {
-        St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, item.text);
+        const clipboard = St.Clipboard.get_default();
+        if (item.kind === 'image')
+            clipboard.set_content(St.ClipboardType.CLIPBOARD, item.mime, item.bytes);
+        else
+            clipboard.set_text(St.ClipboardType.CLIPBOARD, item.text);
         if (!paste)
             return;
         this._pasteId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, PASTE_DELAY_MS, () => {

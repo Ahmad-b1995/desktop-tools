@@ -1,5 +1,12 @@
 # Changelog
 
+## 4 (2026-09-29)
+
+- Clip: images (screenshots, copied pictures) are recorded too, with a
+  thumbnail, size and dimensions; selecting one puts the image back on the
+  clipboard. Up to 20 images, 30 MB each, memory only; searchable as
+  "image" or "screenshot".
+
 ## 3 (2026-09-29)
 
 - Clip: the settings gear and mouse clicks on entries use their own release

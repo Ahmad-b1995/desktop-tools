@@ -27,6 +27,13 @@ clipboard reliably, which is why standalone managers such as CopyQ break.
 
 Pasting uses `Ctrl+Shift+V` automatically in terminals.
 
+Images are recorded too (screenshots, copied pictures): the popup shows a
+thumbnail with size and dimensions, and selecting one puts the image back on
+the clipboard. Up to 20 images are kept, in memory only. Type `image` or
+`screenshot` to filter to them. Terminal programs such as Claude Code read
+clipboard images through `wl-paste`, so install `wl-clipboard` to paste
+images there.
+
 ### Text recognition languages
 
 Open settings with the gear in the history popup, or
@@ -39,7 +46,7 @@ appears in the list.
 
 ### Privacy
 
-- History lives in memory only and is gone when you log out.
+- History, including images, lives in memory only and is gone when you log out.
 - Only pinned entries are written, to `~/.local/share/clip/pinned.json`, mode 0600.
 - Copies that password managers flag as secret (`x-kde-passwordManagerHint`,
   used by KeePassXC and others) are never recorded.
@@ -66,7 +73,7 @@ serves the clipboard. It exits after 30 minutes at most.
 
 Dependencies (Ubuntu/Debian):
 
-    sudo apt install build-essential libgtk-4-dev tesseract-ocr tesseract-ocr-eng
+    sudo apt install build-essential libgtk-4-dev tesseract-ocr tesseract-ocr-eng wl-clipboard
 
 Fedora: `gtk4-devel tesseract tesseract-langpack-eng`. Arch: `gtk4 tesseract tesseract-data-eng`.
 
