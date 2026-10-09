@@ -1,5 +1,16 @@
 # Changelog
 
+## 5 (2026-10-09)
+
+- Clip: fix a crash that logged the user out when choosing an image from the
+  history. The image buffer from `St.Clipboard.get_content()` is only valid
+  during the callback; Clip kept it, and re-copying it later made
+  `st_clipboard_set_content` read freed memory (SIGSEGV in GNOME Shell). Clip
+  now copies the bytes it receives and refuses to re-copy an image whose buffer
+  no longer matches what was captured.
+- tests/image-roundtrip.sh: regression test in a nested GNOME Shell, so a crash
+  can never take down the real session.
+
 ## 4 (2026-09-29)
 
 - Clip: images (screenshots, copied pictures) are recorded too, with a

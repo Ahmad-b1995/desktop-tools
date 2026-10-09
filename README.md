@@ -91,6 +91,7 @@ loads new extensions at login. `make uninstall` removes everything
     make check      # schema, JavaScript syntax, shell scripts, build
     make devkit     # run the extension in a nested GNOME Shell window
     make dist       # extension zip for extensions.gnome.org + source tarball
+    tests/image-roundtrip.sh some.png   # image copy/re-copy test in a nested shell
     journalctl --user -f -o cat /usr/bin/gnome-shell   # extension logs
 
 Layout:

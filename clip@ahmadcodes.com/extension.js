@@ -655,6 +655,8 @@ export default class ClipExtension extends Extension {
         this._selector.cancel();
         if (this._pasteId)
             GLib.source_remove(this._pasteId);
+        if (this._selftestId)
+            GLib.source_remove(this._selftestId);
         this._keyboard.run_dispose();
         this._pasteId = this._keyboard = this._popup = this._selector = null;
         this._history = this._settings = null;
@@ -676,9 +678,37 @@ export default class ClipExtension extends Extension {
         const image = mimes.includes('image/png') ? 'image/png' : mimes.find(m => m.startsWith('image/'));
         if (image) {
             clipboard.get_content(St.ClipboardType.CLIPBOARD, image, (_clip, bytes) => {
-                this._history?.addImage(bytes, image);
+                // St only lends this buffer for the duration of the callback and
+                // frees it afterwards. Keeping it and handing it back later made
+                // set_content read freed memory and crash the whole shell, so
+                // take our own copy before storing it.
+                const owned = bytes?.get_size() ? GLib.Bytes.new(bytes.toArray()) : null;
+                this._history?.addImage(owned, image);
+                this._selftest();
             });
         }
+    }
+
+    // Development only: with CLIP_SELFTEST=1 in the environment (set by
+    // tests/image-roundtrip.sh for a nested shell, never in a real session),
+    // re-copy the newest image a few seconds after it was captured, exactly as
+    // choosing it in the popup does.
+    _selftest() {
+        if (!GLib.getenv('CLIP_SELFTEST') || this._selftestId || this._selftestDone)
+            return;
+        this._selftestDone = true;
+        this._selftestId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
+            this._selftestId = 0;
+            const item = this._history?.items.find(i => i.kind === 'image');
+            if (item) {
+                const now = GLib.compute_checksum_for_bytes(GLib.ChecksumType.SHA256, item.bytes);
+                console.log(`CLIP_SELFTEST: re-copying image ${item.mime} ${item.size} bytes, ` +
+                    `buffer now ${item.bytes.get_size()} bytes, ${now === item.hash ? 'checksum intact' : 'CHECKSUM CHANGED'}`);
+                this._use(item, false);
+                console.log('CLIP_SELFTEST: re-copy returned');
+            }
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _toggleHistory() {
@@ -695,9 +725,16 @@ export default class ClipExtension extends Extension {
 
     _use(item, paste) {
         const clipboard = St.Clipboard.get_default();
-        if (item.kind === 'image')
+        if (item.kind === 'image') {
+            // Never pass native code a buffer that no longer matches what we stored.
+            if (item.bytes?.get_size() !== item.size) {
+                logError(new Error(`image buffer is ${item.bytes?.get_size()} bytes, expected ${item.size}`),
+                    'Clip: dropping unusable image entry');
+                this._history.remove(item);
+                return;
+            }
             clipboard.set_content(St.ClipboardType.CLIPBOARD, item.mime, item.bytes);
-        else
+        } else
             clipboard.set_text(St.ClipboardType.CLIPBOARD, item.text);
         if (!paste)
             return;
