@@ -1,9 +1,16 @@
 {
   "uuid": "clip@ahmadcodes.com",
   "name": "Clip",
-  "description": "Minimal clipboard history (Super+V) and screen text capture (Super+Shift+T). History stays in memory, never touches the network, and skips passwords flagged by password managers.",
-  "shell-version": ["49", "50"],
+  "description": "Clipboard history and screen text capture. Clip reads the clipboard to keep a history of what you copy (text and images), in memory only; it never touches the network and skips copies that password managers flag as secret. Set the shortcuts in the preferences (for example Super+V for the history and Super+Shift+T to copy text from any part of the screen). Text capture needs Tesseract.",
+  "shell-version": [
+    "49",
+    "50"
+  ],
   "settings-schema": "org.gnome.shell.extensions.clip",
-  "session-modes": ["user", "unlock-dialog"],
-  "version": 5
+  "session-modes": [
+    "user",
+    "unlock-dialog"
+  ],
+  "version": 6,
+  "url": "https://github.com/Ahmad-b1995/desktop-tools"
 }

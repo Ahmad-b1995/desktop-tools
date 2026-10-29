@@ -1,0 +1,16 @@
+{
+  "name": "desktop-tools",
+  "private": true,
+  "type": "module",
+  "description": "Build tooling for the Clip GNOME Shell extension (TypeScript to readable JavaScript)",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@girs/gjs": "^4.1.0",
+    "@girs/gnome-shell": "50.0.4",
+    "typescript": "^5.9.3"
+  }
+}

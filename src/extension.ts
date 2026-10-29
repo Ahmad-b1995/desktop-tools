@@ -5,6 +5,7 @@
 // written to disk except entries you pin, and nothing touches the network.
 
 import Clutter from 'gi://Clutter';
+import type Cogl from 'gi://Cogl';
 import GdkPixbuf from 'gi://GdkPixbuf';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -31,54 +32,92 @@ const PASTE_DELAY_MS = 90;            // time for focus to return to the app
 const PASSWORD_HINT = 'x-kde-passwordManagerHint';
 const TERMINAL_CLASSES = /term|kitty|alacritty|foot|wezterm|ghostty|konsole|tilix|terminator|ptyxis|console/i;
 
+interface TextItem {
+    kind?: 'text';
+    text: string;
+    pinned: boolean;
+    time: number;
+}
+
+interface ImageItem {
+    kind: 'image';
+    bytes: GLib.Bytes;
+    mime: string;
+    hash: string;
+    size: number;
+    width: number;
+    height: number;
+    thumb: Gio.Icon;
+    pinned: boolean;
+    time: number;
+}
+
+type Item = TextItem | ImageItem;
+
+// A selected screen region, in texture pixels.
+interface Region {
+    texture: Cogl.Texture;
+    scale: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    logicalHeight: number;
+}
+
 // ---------------------------------------------------------------- history
 
 class History {
-    constructor(file, limit) {
+    limit: number;
+    items: Item[] = [];
+    private readonly _file: Gio.File;
+
+    constructor(file: Gio.File, limit: number) {
         this._file = file;
         this.limit = limit;
-        this.items = [];
         this._loadPinned();
     }
 
-    add(text) {
+    add(text: string | null) {
         if (!text || !text.trim() || text.length > MAX_TEXT_LENGTH)
             return;
-        const index = this.items.findIndex(item => item.text === text);
-        const item = index >= 0 ? this.items.splice(index, 1)[0] : {text, pinned: false};
+        const index = this.items.findIndex(item => item.kind !== 'image' && item.text === text);
+        const item: Item = index >= 0 ? this.items.splice(index, 1)[0] : {text, pinned: false, time: 0};
         item.time = Date.now();
         this.items.unshift(item);
         this._trim();
     }
 
     // Images stay in memory only; pinning keeps one for the session.
-    addImage(bytes, mime) {
+    addImage(bytes: GLib.Bytes | null, mime: string) {
         const size = bytes?.get_size() ?? 0;
-        if (!size || size > MAX_IMAGE_BYTES)
+        if (!bytes || !size || size > MAX_IMAGE_BYTES)
             return;
         const hash = GLib.compute_checksum_for_bytes(GLib.ChecksumType.SHA256, bytes);
-        const index = this.items.findIndex(item => item.hash === hash);
-        let item;
+        if (!hash)
+            return;
+        const index = this.items.findIndex(item => item.kind === 'image' && item.hash === hash);
+        let item: Item;
         if (index >= 0) {
             item = this.items.splice(index, 1)[0];
         } else {
-            item = describeImage(bytes);
-            if (!item)
+            const description = describeImage(bytes);
+            if (!description)
                 return;
-            Object.assign(item, {kind: 'image', bytes, mime, hash, size, pinned: false});
+            item = {...description, kind: 'image', bytes, mime, hash, size, pinned: false, time: 0};
         }
         item.time = Date.now();
         this.items.unshift(item);
         this._trim();
     }
 
-    remove(item) {
+    remove(item: Item) {
         this.items = this.items.filter(i => i !== item);
         if (item.pinned)
             this._savePinned();
     }
 
-    togglePin(item) {
+    togglePin(item: Item) {
         item.pinned = !item.pinned;
         this._trim();
         this._savePinned();
@@ -88,13 +127,13 @@ class History {
         this.items = this.items.filter(i => i.pinned);
     }
 
-    _trim() {
+    private _trim() {
         let unpinned = 0, images = 0;
         this.items = this.items.filter(i => i.pinned ||
             (++unpinned <= this.limit && (i.kind !== 'image' || ++images <= MAX_IMAGES)));
     }
 
-    _loadPinned() {
+    private _loadPinned() {
         try {
             const [, bytes] = this._file.load_contents(null);
             for (const text of JSON.parse(new TextDecoder().decode(bytes))) {
@@ -106,22 +145,24 @@ class History {
         }
     }
 
-    _savePinned() {
-        const pinned = this.items.filter(i => i.pinned && i.kind !== 'image').map(i => i.text);
+    private _savePinned() {
+        const pinned = this.items.filter((i): i is TextItem => i.pinned && i.kind !== 'image').map(i => i.text);
         try {
-            GLib.mkdir_with_parents(this._file.get_parent().get_path(), 0o700);
+            const dir = this._file.get_parent()?.get_path();
+            if (dir)
+                GLib.mkdir_with_parents(dir, 0o700);
             this._file.replace_contents(
                 new TextEncoder().encode(JSON.stringify(pinned)), null, false,
                 Gio.FileCreateFlags.PRIVATE | Gio.FileCreateFlags.REPLACE_DESTINATION, null);
         } catch (e) {
-            logError(e, 'Clip: could not save pinned entries');
+            logError(e as object, 'Clip: could not save pinned entries');
         }
     }
 }
 
 // ------------------------------------------------------------ small utils
 
-function relativeTime(ms) {
+function relativeTime(ms: number) {
     if (!ms)
         return '';
     const s = Math.floor((Date.now() - ms) / 1000);
@@ -135,65 +176,108 @@ function relativeTime(ms) {
 }
 
 // Size and a small PNG thumbnail, decoded once when the image is copied.
-function describeImage(bytes) {
+function describeImage(bytes: GLib.Bytes) {
     try {
         const loader = new GdkPixbuf.PixbufLoader();
         loader.write_bytes(bytes);
         loader.close();
         const pixbuf = loader.get_pixbuf();
+        if (!pixbuf)
+            return null;
         const width = pixbuf.get_width(), height = pixbuf.get_height();
         const scale = Math.min(1, (THUMB_HEIGHT * 2) / height);
         const thumb = pixbuf.scale_simple(Math.max(1, Math.round(width * scale)),
             Math.max(1, Math.round(height * scale)), GdkPixbuf.InterpType.BILINEAR);
+        if (!thumb)
+            return null;
         const [, png] = thumb.save_to_bufferv('png', [], []);
         return {width, height, thumb: Gio.BytesIcon.new(GLib.Bytes.new(png))};
     } catch (e) {
-        logError(e, 'Clip: could not read copied image');
+        logError(e as object, 'Clip: could not read copied image');
         return null;
     }
 }
 
-function formatBytes(n) {
+function formatBytes(n: number) {
     if (n < 1024 * 1024)
         return `${Math.max(1, Math.round(n / 1024))} KB`;
     return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function searchText(item) {
+function searchText(item: Item) {
     return item.kind === 'image'
         ? `image screenshot picture ${item.width}x${item.height} ${item.mime}`
         : item.text;
 }
 
-function matches(text, words) {
+function matches(text: string, words: string[]) {
     const haystack = text.toLowerCase();
     return words.every(w => haystack.includes(w));
 }
 
+// The types describe GNOME 50. These are the GNOME 49 APIs it removed, used
+// only when present.
+interface Gnome49Grab {
+    get_seat_state?: () => number;
+    is_revoked?: () => boolean;
+}
+interface Gnome49Clutter {
+    GrabState?: {KEYBOARD: number};
+    CursorType?: {CROSSHAIR: number; INHERIT: number};
+}
+interface Gnome49Display {
+    set_cursor?: (cursor: number) => void;
+}
+interface Gnome49Meta {
+    Cursor?: {CROSSHAIR: number; DEFAULT: number};
+}
+interface CursorActor {
+    set_cursor_type?: (type: number) => void;
+}
+
 // GNOME 49 reports which devices a grab holds; GNOME 50 dropped that API and
 // only tells whether the grab was revoked.
-function grabbedKeyboard(grab) {
-    if (typeof grab.get_seat_state === 'function')
-        return (grab.get_seat_state() & Clutter.GrabState.KEYBOARD) !== 0;
-    return !grab.is_revoked?.();
+function grabbedKeyboard(grab: Clutter.Grab) {
+    const g = grab as unknown as Gnome49Grab;
+    const grabState = (Clutter as unknown as Gnome49Clutter).GrabState;
+    if (typeof g.get_seat_state === 'function' && grabState)
+        return (g.get_seat_state() & grabState.KEYBOARD) !== 0;
+    return !g.is_revoked?.();
 }
 
 // GNOME 50 sets cursors per actor; GNOME 49 sets one for the whole display.
-function setCrosshair(actor, on) {
-    if (typeof actor.set_cursor_type === 'function' && Clutter.CursorType)
-        actor.set_cursor_type(on ? Clutter.CursorType.CROSSHAIR : Clutter.CursorType.INHERIT);
-    else
-        global.display.set_cursor(on ? Meta.Cursor.CROSSHAIR : Meta.Cursor.DEFAULT);
+function setCrosshair(actor: Clutter.Actor, on: boolean) {
+    const a = actor as unknown as CursorActor;
+    const types = (Clutter as unknown as Gnome49Clutter).CursorType;
+    if (typeof a.set_cursor_type === 'function' && types) {
+        a.set_cursor_type(on ? types.CROSSHAIR : types.INHERIT);
+        return;
+    }
+    const display = global.display as unknown as Gnome49Display;
+    const cursors = (Meta as unknown as Gnome49Meta).Cursor;
+    if (display.set_cursor && cursors)
+        display.set_cursor(on ? cursors.CROSSHAIR : cursors.DEFAULT);
 }
 
 // ------------------------------------------------------------ history popup
 
 class HistoryPopup {
-    constructor(history, onActivate, onSettings) {
+    private readonly _history: History;
+    private readonly _onActivate: (item: Item, paste: boolean) => void;
+    private readonly _onSettings: () => void;
+    private _root: St.Widget | null = null;
+    private _grab: Clutter.Grab | null = null;
+    private _entry!: St.Entry;
+    private _scroll!: St.ScrollView;
+    private _list!: St.BoxLayout;
+    private _rows: St.BoxLayout[] = [];
+    private _shown: Item[] = [];
+    private _selected = -1;
+
+    constructor(history: History, onActivate: (item: Item, paste: boolean) => void, onSettings: () => void) {
         this._history = history;
         this._onActivate = onActivate;
         this._onSettings = onSettings;
-        this._root = null;
     }
 
     get isOpen() {
@@ -205,12 +289,15 @@ class HistoryPopup {
             return;
 
         const monitor = Main.layoutManager.currentMonitor;
-        this._root = new St.Widget({
+        if (!monitor)
+            return;
+        const root = new St.Widget({
             reactive: true, x: 0, y: 0,
             width: global.stage.width, height: global.stage.height,
             style_class: 'clip-backdrop',
         });
-        this._root.connect('button-press-event', () => {
+        this._root = root;
+        root.connect('button-press-event', () => {
             this.close();
             return Clutter.EVENT_STOP;
         });
@@ -244,7 +331,7 @@ class HistoryPopup {
             accessible_name: 'Clip settings',
             child: new St.Icon({icon_name: 'emblem-system-symbolic'}),
         });
-        gear.connect('button-release-event', (_a, event) => {
+        gear.connect('button-release-event', (_a: Clutter.Actor, event: Clutter.Event) => {
             if (event.get_button() === Clutter.BUTTON_PRIMARY)
                 this._openSettings();
             return Clutter.EVENT_STOP;
@@ -254,7 +341,7 @@ class HistoryPopup {
         panel.add_child(this._entry);
         panel.add_child(this._scroll);
         panel.add_child(footer);
-        this._root.add_child(panel);
+        root.add_child(panel);
 
         const width = Math.min(620, monitor.width - 32);
         panel.set_width(width);
@@ -262,12 +349,13 @@ class HistoryPopup {
             monitor.x + Math.floor((monitor.width - width) / 2),
             monitor.y + Math.floor(monitor.height * 0.16));
 
-        Main.uiGroup.add_child(this._root);
-        Main.uiGroup.set_child_above_sibling(this._root, null);
+        Main.uiGroup.add_child(root);
+        Main.uiGroup.set_child_above_sibling(root, null);
 
-        this._grab = Main.pushModal(this._root, {actionMode: Shell.ActionMode.SYSTEM_MODAL});
+        const grab = Main.pushModal(root, {actionMode: Shell.ActionMode.SYSTEM_MODAL});
+        this._grab = grab;
         try {
-            if (!grabbedKeyboard(this._grab)) {
+            if (!grabbedKeyboard(grab)) {
                 this.close();
                 return;
             }
@@ -278,7 +366,7 @@ class HistoryPopup {
 
         const text = this._entry.clutter_text;
         text.connect('text-changed', () => this._refilter());
-        text.connect('key-press-event', (_a, event) => this._onKey(event));
+        text.connect('key-press-event', (_a: Clutter.Actor, event: Clutter.Event) => this._onKey(event));
         global.stage.set_key_focus(text);
         this._refilter();
     }
@@ -294,7 +382,7 @@ class HistoryPopup {
         this._rows = [];
     }
 
-    _refilter() {
+    private _refilter() {
         const words = this._entry.get_text().toLowerCase().split(/\s+/).filter(Boolean);
         this._shown = this._history.items.filter(i => matches(searchText(i), words)).slice(0, MAX_ROWS);
         this._list.destroy_all_children();
@@ -309,14 +397,13 @@ class HistoryPopup {
         this._select(0);
     }
 
-    _makeRow(item, index) {
+    private _makeRow(item: Item, index: number) {
         const row = new St.BoxLayout({style_class: 'clip-row', x_expand: true, reactive: true, track_hover: true});
-        const box = row;
 
         let meta;
         if (item.kind === 'image') {
-            box.add_child(new St.Icon({gicon: item.thumb, icon_size: THUMB_HEIGHT, style_class: 'clip-row-thumb'}));
-            box.add_child(new St.Label({
+            row.add_child(new St.Icon({gicon: item.thumb, icon_size: THUMB_HEIGHT, style_class: 'clip-row-thumb'}));
+            row.add_child(new St.Label({
                 text: `Image  ${item.width} × ${item.height}`, x_expand: true,
                 y_align: Clutter.ActorAlign.CENTER, style_class: 'clip-row-text',
             }));
@@ -325,18 +412,18 @@ class HistoryPopup {
             const preview = item.text.replace(/\s+/g, ' ').trim().slice(0, PREVIEW_LENGTH);
             const label = new St.Label({text: preview, x_expand: true, y_align: Clutter.ActorAlign.CENTER, style_class: 'clip-row-text'});
             label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-            box.add_child(label);
+            row.add_child(label);
             const lines = item.text.split('\n').length;
             meta = [lines > 1 ? `${lines} lines` : '', relativeTime(item.time)].filter(Boolean).join('  ·  ');
         }
         if (meta)
-            box.add_child(new St.Label({text: meta, y_align: Clutter.ActorAlign.CENTER, style_class: 'clip-row-meta'}));
+            row.add_child(new St.Label({text: meta, y_align: Clutter.ActorAlign.CENTER, style_class: 'clip-row-meta'}));
         if (item.pinned)
-            box.add_child(new St.Icon({icon_name: 'view-pin-symbolic', style_class: 'clip-row-pin'}));
+            row.add_child(new St.Icon({icon_name: 'view-pin-symbolic', style_class: 'clip-row-pin'}));
         if (index < 9)
-            box.add_child(new St.Label({text: `Alt+${index + 1}`, y_align: Clutter.ActorAlign.CENTER, style_class: 'clip-row-key'}));
+            row.add_child(new St.Label({text: `Alt+${index + 1}`, y_align: Clutter.ActorAlign.CENTER, style_class: 'clip-row-key'}));
 
-        row.connect('button-release-event', (_a, event) => {
+        row.connect('button-release-event', (_a: Clutter.Actor, event: Clutter.Event) => {
             if (event.get_button() === Clutter.BUTTON_PRIMARY)
                 this._activate(index, true);
             return Clutter.EVENT_STOP;
@@ -349,7 +436,7 @@ class HistoryPopup {
         return row;
     }
 
-    _select(index, scroll = true) {
+    private _select(index: number, scroll = true) {
         if (this._rows.length === 0)
             return;
         index = Math.max(0, Math.min(index, this._rows.length - 1));
@@ -363,12 +450,12 @@ class HistoryPopup {
             ensureActorVisibleInScrollView(this._scroll, row);
     }
 
-    _openSettings() {
+    private _openSettings() {
         this.close();
         this._onSettings();
     }
 
-    _activate(index, paste) {
+    private _activate(index: number, paste: boolean) {
         const item = this._shown[index];
         if (!item)
             return;
@@ -376,7 +463,7 @@ class HistoryPopup {
         this._onActivate(item, paste);
     }
 
-    _onKey(event) {
+    private _onKey(event: Clutter.Event) {
         const key = event.get_key_symbol();
         const state = event.get_state();
         const ctrl = (state & Clutter.ModifierType.CONTROL_MASK) !== 0;
@@ -446,14 +533,17 @@ class HistoryPopup {
 // ------------------------------------------------------- region selection
 
 class RegionSelector {
-    constructor() {
-        this._root = null;
-    }
+    private _root: St.Widget | null = null;
+    private _grab: Clutter.Grab | null = null;
+    private _shades: St.Widget[] = [];
+    private _frame!: St.Widget;
+    private _size!: St.Label;
+    private _cancel: (() => void) | null = null;
 
-    // Resolves with {texture, scale, x, y, width, height} in texture pixels,
-    // or null if the user cancelled. The screen is frozen first, so menus and
-    // tooltips that vanish on click can still be captured.
-    async select(languages) {
+    // Resolves with the selected region, or null if the user cancelled. The
+    // screen is frozen first, so menus and tooltips that vanish on click can
+    // still be captured.
+    async select(languages: string): Promise<Region | null> {
         if (this._root)
             return null;
 
@@ -461,74 +551,79 @@ class RegionSelector {
         const [content, scale] = await shooter.screenshot_stage_to_content();
         const {width, height} = global.stage;
 
-        this._root = new St.Widget({reactive: true, x: 0, y: 0, width, height});
-        this._root.add_child(new Clutter.Actor({content, width, height}));
+        const root = new St.Widget({reactive: true, x: 0, y: 0, width, height});
+        this._root = root;
+        root.add_child(new Clutter.Actor({content, width, height}));
         this._shades = [0, 1, 2, 3].map(() => {
             const shade = new St.Widget({style_class: 'clip-shade'});
-            this._root.add_child(shade);
+            root.add_child(shade);
             return shade;
         });
         this._frame = new St.Widget({style_class: 'clip-frame', visible: false});
         this._size = new St.Label({style_class: 'clip-badge', visible: false});
-        this._root.add_child(this._frame);
-        this._root.add_child(this._size);
+        root.add_child(this._frame);
+        root.add_child(this._size);
 
         const monitor = Main.layoutManager.currentMonitor;
         const tip = new St.Label({style_class: 'clip-badge clip-tip', text: `Drag over the text to copy    ${languages.replaceAll('+', ' + ')}    Esc to cancel`});
-        this._root.add_child(tip);
-        tip.connect('notify::width', () => tip.set_position(
-            monitor.x + Math.floor((monitor.width - tip.width) / 2), monitor.y + 40));
+        root.add_child(tip);
+        if (monitor) {
+            tip.connect('notify::width', () => tip.set_position(
+                monitor.x + Math.floor((monitor.width - tip.width) / 2), monitor.y + 40));
+        }
 
         this._layout(0, 0, 0, 0);
-        Main.uiGroup.add_child(this._root);
-        Main.uiGroup.set_child_above_sibling(this._root, null);
+        Main.uiGroup.add_child(root);
+        Main.uiGroup.set_child_above_sibling(root, null);
 
-        this._grab = Main.pushModal(this._root, {actionMode: Shell.ActionMode.POPUP});
+        const grab = Main.pushModal(root, {actionMode: Shell.ActionMode.POPUP});
+        this._grab = grab;
         try {
-            if (!grabbedKeyboard(this._grab)) {
+            if (!grabbedKeyboard(grab)) {
                 this._close();
                 return null;
             }
-            setCrosshair(this._root, true);
+            setCrosshair(root, true);
         } catch (e) {
             this._close();
             throw e;
         }
 
         return new Promise(resolve => {
-            let start = null;
-            let rect = null;
-            const finish = result => {
+            let start: [number, number] | null = null;
+            let rect: number[] | null = null;
+            const finish = (result: Region | null) => {
                 this._close();
                 resolve(result);
             };
-            this._root.connect('button-press-event', (_a, event) => {
+            root.connect('button-press-event', (_a: Clutter.Actor, event: Clutter.Event) => {
                 if (event.get_button() === Clutter.BUTTON_PRIMARY)
                     start = event.get_coords();
                 else
                     finish(null);
                 return Clutter.EVENT_STOP;
             });
-            this._root.connect('motion-event', (_a, event) => {
+            root.connect('motion-event', (_a: Clutter.Actor, event: Clutter.Event) => {
                 if (start) {
                     const [x, y] = event.get_coords();
                     rect = [Math.min(start[0], x), Math.min(start[1], y), Math.abs(x - start[0]), Math.abs(y - start[1])].map(Math.round);
-                    this._layout(...rect);
+                    this._layout(rect[0], rect[1], rect[2], rect[3]);
                 }
                 return Clutter.EVENT_STOP;
             });
-            this._root.connect('button-release-event', (_a, event) => {
+            root.connect('button-release-event', (_a: Clutter.Actor, event: Clutter.Event) => {
                 if (event.get_button() !== Clutter.BUTTON_PRIMARY || !start)
                     return Clutter.EVENT_STOP;
                 if (!rect || rect[2] < 4 || rect[3] < 4) {
                     finish(null);
                 } else {
                     const [x, y, w, h] = rect.map(v => Math.round(v * scale));
-                    finish({texture: content.get_texture(), scale, x, y, width: w, height: h, logicalHeight: rect[3]});
+                    const texture = (content as Clutter.TextureContent).get_texture();
+                    finish(texture ? {texture, scale, x, y, width: w, height: h, logicalHeight: rect[3]} : null);
                 }
                 return Clutter.EVENT_STOP;
             });
-            this._root.connect('key-press-event', (_a, event) => {
+            root.connect('key-press-event', (_a: Clutter.Actor, event: Clutter.Event) => {
                 if (event.get_key_symbol() === Clutter.KEY_Escape)
                     finish(null);
                 return Clutter.EVENT_STOP;
@@ -541,7 +636,7 @@ class RegionSelector {
         this._cancel?.();
     }
 
-    _layout(x, y, w, h) {
+    private _layout(x: number, y: number, w: number, h: number) {
         const {width: W, height: H} = global.stage;
         const [top, bottom, left, right] = this._shades;
         top.set_position(0, 0);
@@ -563,7 +658,7 @@ class RegionSelector {
         }
     }
 
-    _close() {
+    private _close() {
         if (!this._root)
             return;
         setCrosshair(this._root, false);
@@ -578,8 +673,15 @@ class RegionSelector {
 
 // ------------------------------------------------------------------ OCR
 
-async function recognize(region, languages) {
-    const pixbuf = await Shell.Screenshot.composite_to_stream(
+// composite_to_stream() is promisified at the top of this file; the types only
+// describe its callback form.
+type CompositeToStream = (texture: Cogl.Texture, x: number, y: number, width: number, height: number,
+    scale: number, cursor: Cogl.Texture | null, cursorX: number, cursorY: number, cursorScale: number,
+    stream: Gio.OutputStream) => Promise<GdkPixbuf.Pixbuf>;
+
+async function recognize(region: Region, languages: string) {
+    const compositeToStream = Shell.Screenshot.composite_to_stream as unknown as CompositeToStream;
+    const pixbuf = await compositeToStream(
         region.texture, region.x, region.y, region.width, region.height,
         region.scale, null, 0, 0, 1, Gio.MemoryOutputStream.new_resizable());
 
@@ -587,7 +689,7 @@ async function recognize(region, languages) {
     // regions is the single biggest accuracy win.
     const factor = Math.max(1, Math.min(3, Math.floor(4000 / Math.max(region.width, region.height))));
     const scaled = factor > 1
-        ? pixbuf.scale_simple(region.width * factor, region.height * factor, GdkPixbuf.InterpType.BILINEAR)
+        ? pixbuf.scale_simple(region.width * factor, region.height * factor, GdkPixbuf.InterpType.BILINEAR) ?? pixbuf
         : pixbuf;
 
     // Per-user tmpfs, mode 0700: the image never lands on a real disk.
@@ -604,7 +706,7 @@ async function recognize(region, languages) {
     }
 }
 
-async function tesseract(path, languages, psm) {
+async function tesseract(path: string, languages: string, psm: string) {
     const proc = Gio.Subprocess.new(
         ['tesseract', path, 'stdout', '-l', languages, '--psm', psm],
         Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
@@ -621,13 +723,25 @@ async function tesseract(path, languages, psm) {
 // ------------------------------------------------------------ extension
 
 export default class ClipExtension extends Extension {
+    private _settings: Gio.Settings | null = null;
+    private _history: History | null = null;
+    private _popup: HistoryPopup | null = null;
+    private _selector: RegionSelector | null = null;
+    private _keyboard: Clutter.VirtualInputDevice | null = null;
+    private _pasteId = 0;
+    private _selftestId = 0;
+    private _selftestDone = false;
+    private _pasteIntoTerminal = false;
+
     enable() {
-        this._settings = this.getSettings();
+        const settings = this.getSettings();
+        this._settings = settings;
         const pinnedFile = Gio.File.new_for_path(
             GLib.build_filenamev([GLib.get_user_data_dir(), 'clip', 'pinned.json']));
-        this._history = new History(pinnedFile, this._settings.get_int('history-size'));
-        this._settings.connectObject('changed::history-size', () => {
-            this._history.limit = this._settings.get_int('history-size');
+        this._history = new History(pinnedFile, settings.get_int('history-size'));
+        settings.connectObject('changed::history-size', () => {
+            if (this._history)
+                this._history.limit = settings.get_int('history-size');
         }, this);
 
         this._popup = new HistoryPopup(this._history, (item, paste) => this._use(item, paste),
@@ -637,32 +751,47 @@ export default class ClipExtension extends Extension {
             .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
 
         global.display.get_selection().connectObject(
-            'owner-changed', (_sel, type, source) => this._onOwnerChanged(type, source), this);
+            'owner-changed', (_sel: Meta.Selection, type: Meta.SelectionType, source: Meta.SelectionSource | null) =>
+                this._onOwnerChanged(type, source), this);
+
+        // Clip stays enabled on the lock screen (session mode unlock-dialog) so
+        // that locking does not wipe the in-memory history. Nothing of it is
+        // usable there: the shortcuts below only work in NORMAL and OVERVIEW,
+        // and any open popup or region selection is closed when the screen locks.
+        Main.sessionMode.connectObject('updated', () => {
+            if (Main.sessionMode.isLocked) {
+                this._popup?.close();
+                this._selector?.cancel();
+            }
+        }, this);
 
         const modes = Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW;
-        Main.wm.addKeybinding('show-history', this._settings, Meta.KeyBindingFlags.NONE, modes,
+        Main.wm.addKeybinding('show-history', settings, Meta.KeyBindingFlags.NONE, modes,
             () => this._toggleHistory());
-        Main.wm.addKeybinding('capture-text', this._settings, Meta.KeyBindingFlags.NONE, modes,
+        Main.wm.addKeybinding('capture-text', settings, Meta.KeyBindingFlags.NONE, modes,
             () => this._captureText().catch(e => logError(e, 'Clip OCR')));
     }
 
+    // Also called when the session ends. Not called on the lock screen (see enable()).
     disable() {
         Main.wm.removeKeybinding('show-history');
         Main.wm.removeKeybinding('capture-text');
         global.display.get_selection().disconnectObject(this);
-        this._settings.disconnectObject(this);
-        this._popup.close();
-        this._selector.cancel();
+        Main.sessionMode.disconnectObject(this);
+        this._settings?.disconnectObject(this);
+        this._popup?.close();
+        this._selector?.cancel();
         if (this._pasteId)
             GLib.source_remove(this._pasteId);
         if (this._selftestId)
             GLib.source_remove(this._selftestId);
-        this._keyboard.run_dispose();
-        this._pasteId = this._keyboard = this._popup = this._selector = null;
+        this._keyboard?.run_dispose();
+        this._pasteId = this._selftestId = 0;
+        this._keyboard = this._popup = this._selector = null;
         this._history = this._settings = null;
     }
 
-    _onOwnerChanged(type, source) {
+    private _onOwnerChanged(type: Meta.SelectionType, source: Meta.SelectionSource | null) {
         if (type !== Meta.SelectionType.SELECTION_CLIPBOARD || !source)
             return;
         const mimes = source.get_mimetypes();
@@ -693,13 +822,13 @@ export default class ClipExtension extends Extension {
     // tests/image-roundtrip.sh for a nested shell, never in a real session),
     // re-copy the newest image a few seconds after it was captured, exactly as
     // choosing it in the popup does.
-    _selftest() {
+    private _selftest() {
         if (!GLib.getenv('CLIP_SELFTEST') || this._selftestId || this._selftestDone)
             return;
         this._selftestDone = true;
         this._selftestId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3000, () => {
             this._selftestId = 0;
-            const item = this._history?.items.find(i => i.kind === 'image');
+            const item = this._history?.items.find((i): i is ImageItem => i.kind === 'image');
             if (item) {
                 const now = GLib.compute_checksum_for_bytes(GLib.ChecksumType.SHA256, item.bytes);
                 console.log(`CLIP_SELFTEST: re-copying image ${item.mime} ${item.size} bytes, ` +
@@ -711,7 +840,9 @@ export default class ClipExtension extends Extension {
         });
     }
 
-    _toggleHistory() {
+    private _toggleHistory() {
+        if (!this._popup)
+            return;
         if (this._popup.isOpen) {
             this._popup.close();
             return;
@@ -723,36 +854,42 @@ export default class ClipExtension extends Extension {
         this._popup.open();
     }
 
-    _use(item, paste) {
+    private _use(item: Item, paste: boolean) {
         const clipboard = St.Clipboard.get_default();
         if (item.kind === 'image') {
             // Never pass native code a buffer that no longer matches what we stored.
             if (item.bytes?.get_size() !== item.size) {
                 logError(new Error(`image buffer is ${item.bytes?.get_size()} bytes, expected ${item.size}`),
                     'Clip: dropping unusable image entry');
-                this._history.remove(item);
+                this._history?.remove(item);
                 return;
             }
             clipboard.set_content(St.ClipboardType.CLIPBOARD, item.mime, item.bytes);
-        } else
+        } else {
             clipboard.set_text(St.ClipboardType.CLIPBOARD, item.text);
+        }
         if (!paste)
             return;
         this._pasteId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, PASTE_DELAY_MS, () => {
             this._pasteId = 0;
+            const keyboard = this._keyboard;
+            if (!keyboard)
+                return GLib.SOURCE_REMOVE;
             const keys = this._pasteIntoTerminal
                 ? [Clutter.KEY_Control_L, Clutter.KEY_Shift_L, Clutter.KEY_v]
                 : [Clutter.KEY_Control_L, Clutter.KEY_v];
             const time = Clutter.get_current_event_time() * 1000;
             for (const key of keys)
-                this._keyboard.notify_keyval(time, key, Clutter.KeyState.PRESSED);
+                keyboard.notify_keyval(time, key, Clutter.KeyState.PRESSED);
             for (const key of keys.reverse())
-                this._keyboard.notify_keyval(time, key, Clutter.KeyState.RELEASED);
+                keyboard.notify_keyval(time, key, Clutter.KeyState.RELEASED);
             return GLib.SOURCE_REMOVE;
         });
     }
 
-    async _captureText() {
+    private async _captureText() {
+        if (!this._popup || !this._selector || !this._settings)
+            return;
         this._popup.close();
         const languages = this._settings.get_string('ocr-languages');
         const region = await this._selector.select(languages);
@@ -763,7 +900,7 @@ export default class ClipExtension extends Extension {
             text = await recognize(region, languages);
         } catch (e) {
             Main.notifyError('Could not read text', GLib.find_program_in_path('tesseract')
-                ? e.message : 'Tesseract is not installed (sudo apt install tesseract-ocr).');
+                ? (e as Error).message : 'Tesseract is not installed (sudo apt install tesseract-ocr).');
             return;
         }
         if (!text) {

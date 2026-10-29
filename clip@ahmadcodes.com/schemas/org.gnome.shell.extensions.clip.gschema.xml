@@ -2,17 +2,19 @@
 <schemalist>
   <schema id="org.gnome.shell.extensions.clip" path="/org/gnome/shell/extensions/clip/">
     <key name="show-history" type="as">
-      <default><![CDATA[['<Super>v']]]></default>
+      <default><![CDATA[[]]]></default>
       <summary>Open clipboard history</summary>
+      <description>No shortcut by default; set one in the preferences (install.sh sets Super+V).</description>
     </key>
     <key name="capture-text" type="as">
-      <default><![CDATA[['<Super><Shift>t']]]></default>
+      <default><![CDATA[[]]]></default>
       <summary>Select a screen region and copy the text in it</summary>
+      <description>No shortcut by default; set one in the preferences (install.sh sets Super+Shift+T).</description>
     </key>
     <key name="ocr-languages" type="s">
-      <default>'eng+fas'</default>
+      <default>'eng'</default>
       <summary>Tesseract language codes, joined with +</summary>
-      <description>Installed: eng, fas, hye. Fewer languages means faster and more accurate results.</description>
+      <description>Fewer languages means faster and more accurate results.</description>
     </key>
     <key name="history-size" type="i">
       <range min="10" max="1000"/>

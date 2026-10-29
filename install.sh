@@ -8,7 +8,7 @@ UUID=clip@ahmadcodes.com
 EXT_DIR=$HOME/.local/share/gnome-shell/extensions/$UUID
 OLD=clipboard-indicator@tudmotu.com
 
-for need in pkg-config:pkg-config gnome-extensions:gnome-shell glib-compile-schemas:libglib2.0-bin python3:python3; do
+for need in pkg-config:pkg-config gnome-extensions:gnome-shell glib-compile-schemas:libglib2.0-bin python3:python3 npm:npm dconf:dconf-cli; do
   command -v "${need%%:*}" >/dev/null || { echo "Missing ${need%%:*} (package ${need#*:})"; exit 1; }
 done
 pkg-config --exists gtk4 || { echo "Missing GTK 4 headers: sudo apt install libgtk-4-dev"; exit 1; }
@@ -41,6 +41,10 @@ gsettings set $KB.custom-keybinding:$KP name 'Pick color'
 gsettings set $KB.custom-keybinding:$KP command "$HOME/.local/bin/pick"
 gsettings set $KB.custom-keybinding:$KP binding '<Super><Shift>c'
 
+echo "== Clip: build (TypeScript to JavaScript)"
+[ -d node_modules ] || npm ci --no-audit --no-fund
+npx tsc
+
 echo "== Clip: install extension"
 rm -rf "$EXT_DIR"
 mkdir -p "$EXT_DIR"
@@ -51,6 +55,14 @@ echo "== Remove the old clipboard manager and its plain-text history"
 gnome-extensions disable $OLD 2>/dev/null || true
 edit_list org.gnome.shell enabled-extensions remove "$OLD"
 rm -rf "$HOME/.local/share/gnome-shell/extensions/$OLD" "$HOME/.cache/$OLD"
+
+echo "== Clip: shortcuts (only ones you have not set yourself)"
+# The extension ships without shortcuts (extensions.gnome.org requires that for
+# clipboard tools); a local install sets the usual ones unless already chosen.
+for pair in "show-history:['<Super>v']" "capture-text:['<Super><Shift>t']"; do
+  key=${pair%%:*}
+  [ -n "$(dconf read "/org/gnome/shell/extensions/clip/$key")" ] || dconf write "/org/gnome/shell/extensions/clip/$key" "${pair#*:}"
+done
 
 echo "== Enable Clip"
 edit_list org.gnome.shell enabled-extensions add "$UUID"
