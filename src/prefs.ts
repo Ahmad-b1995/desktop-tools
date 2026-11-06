@@ -114,7 +114,7 @@ export default class ClipPreferences extends ExtensionPreferences {
         const general = new Adw.PreferencesGroup({title: 'Clipboard history'});
         const size = new Adw.SpinRow({
             title: 'Entries to keep',
-            subtitle: 'Pinned entries are kept in addition to these',
+            subtitle: 'History is kept in memory only. Pinned entries are kept in addition to these and are saved to disk (~/.local/share/clip/pinned.json)',
             adjustment: new Gtk.Adjustment({lower: 10, upper: 1000, step_increment: 10}),
         });
         this._settings.bind('history-size', size, 'value', Gio.SettingsBindFlags.DEFAULT);

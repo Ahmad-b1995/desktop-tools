@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The popup's key hint and the settings now say that pinned entries are saved to
+  disk, and that the rest of the history stays in memory.
+
 ## 6 (2026-10-29)
 
 - Clip is now written in TypeScript (`src/`), type-checked against the GNOME 50

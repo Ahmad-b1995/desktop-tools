@@ -322,7 +322,7 @@ class HistoryPopup {
         const footer = new St.BoxLayout({style_class: 'clip-footer'});
         footer.add_child(new St.Label({
             style_class: 'clip-hint', x_expand: true, y_align: Clutter.ActorAlign.CENTER,
-            text: 'Enter paste    Shift+Enter copy    Ctrl+P pin    Del remove    Ctrl+, settings',
+            text: 'Enter paste    Shift+Enter copy    Ctrl+P pin (saved to disk)    Del remove    Ctrl+, settings',
         }));
         // Plain reactive actors with our own release handlers: GNOME 50 changed
         // how St.Button clicks are delivered inside a modal grab.
